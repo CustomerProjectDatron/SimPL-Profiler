@@ -1,0 +1,1129 @@
+﻿<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profiler Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e0e4ef;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 18px 24px;
+      background: #161b28;
+      border-bottom: 1px solid #252d45;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; color: #a0b0d8; letter-spacing: 0.04em; }
+
+    /* ── Drop Zone ── */
+    #drop-zone {
+      margin: 40px auto;
+      width: min(600px, calc(100% - 48px));
+      border: 2px dashed #2e3a5a;
+      border-radius: 12px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      color: #6a7fa8;
+    }
+    #drop-zone.dragover {
+      border-color: #4e7aff;
+      background: #161e33;
+      color: #8aaeff;
+    }
+    #drop-zone svg { display: block; margin: 0 auto 16px; opacity: 0.5; }
+    #drop-zone p   { font-size: 0.95rem; }
+    #drop-zone p small { display: block; margin-top: 6px; font-size: 0.78rem; opacity: 0.6; }
+
+    #file-input { display: none; }
+
+    /* ── Tree container ── */
+    #tree-container {
+      display: none;
+      flex: 1;
+      padding: 16px 20px 40px;
+      overflow-x: auto;
+    }
+
+    /* toolbar */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: #1e2740;
+      border: 1px solid #2e3a5a;
+      color: #8aaeff;
+      border-radius: 6px;
+      padding: 5px 14px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #253050; }
+    #info-label { margin-left: auto; font-size: 0.8rem; color: #4e5f8a; }
+
+    /* ── Node card ── */
+    .node {
+      margin: 3px 0;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background 0.12s;
+      user-select: none;
+    }
+    .node-header:hover { background: #1a2236; }
+
+    /* expand toggle */
+    .toggle {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #4e6094;
+      font-size: 0.75rem;
+      transition: transform 0.18s;
+    }
+    .toggle.open { transform: rotate(90deg); color: #8aaeff; }
+    .toggle.leaf  { color: #2a3350; cursor: default; }
+
+    /* namespace · name */
+    .name-part {
+      flex-shrink: 0;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ns  { color: #4e6094; font-size: 0.82rem; }
+    .sep { color: #2e3a5a; margin: 0 2px; }
+    .fn  { color: #c9d8ff; font-size: 0.85rem; font-weight: 500; }
+
+    /* time bar */
+    .bar-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 80px;
+    }
+    .bar-bg {
+      flex: 1;
+      height: 6px;
+      background: #1a2236;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .bar-total {
+      height: 100%;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #3a5eff, #7a6fff);
+      min-width: 2px;
+      transition: width 0.25s;
+    }
+    .bar-self-overlay {
+      /* sits on top, shown via mix-blend trick via JS-rendered inner bar */
+    }
+
+    /* time labels */
+    .time-total {
+      flex-shrink: 0;
+      font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      color: #8aaeff;
+      width: 70px;
+      text-align: right;
+    }
+    .time-self {
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      color: #4e6094;
+      width: 64px;
+      text-align: right;
+    }
+
+    /* call count badge */
+    .call-count {
+      flex-shrink: 0;
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+      color: #3a5090;
+      background: #141c30;
+      border: 1px solid #1e2a44;
+      border-radius: 10px;
+      padding: 1px 7px;
+      white-space: nowrap;
+    }
+    .call-count.multi {
+      color: #e0a840;
+      border-color: #3a2e10;
+      background: #1e1a0a;
+    }
+
+    /* children indented */
+    .node-children {
+      display: none;
+      padding-left: 20px;
+      border-left: 1px solid #1e2740;
+      margin-left: 11px;
+    }
+    .node-children.open { display: block; }
+
+    /* ── depth colours for bar ── */
+    .d0 .bar-total { background: linear-gradient(90deg, #e06030, #f0a060); }
+    .d1 .bar-total { background: linear-gradient(90deg, #3a80ff, #7060ff); }
+    .d2 .bar-total { background: linear-gradient(90deg, #20b080, #40d0a0); }
+    .d3 .bar-total { background: linear-gradient(90deg, #c040d0, #e060a0); }
+    .d4 .bar-total { background: linear-gradient(90deg, #d0a020, #e0c040); }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f1117; }
+    ::-webkit-scrollbar-thumb { background: #252d45; border-radius: 3px; }
+
+    /* ── Tabs ── */
+    #tab-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #1e2740;
+      padding-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      background: transparent;
+      border: 1px solid #252d45;
+      color: #4e6094;
+      border-radius: 6px;
+      padding: 5px 18px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab:hover { background: #1a2236; color: #8aaeff; }
+    .tab.active { background: #1e2c4a; color: #c9d8ff; border-color: #4e7aff; }
+    #tab-info { margin-left: auto; font-size: 0.8rem; color: #4e5f8a; }
+
+    /* ── Hotspot view ── */
+    .hs-sort-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: #4e5f8a;
+    }
+    .sort-btn.active { background: #1e2c4a; color: #c9d8ff; border-color: #4e7aff; }
+
+    .hs-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      margin: 2px 0;
+      transition: background 0.12s;
+    }
+    .hs-row:hover { background: #1a2236; }
+    .hs-rank {
+      flex-shrink: 0;
+      width: 26px;
+      text-align: right;
+      font-size: 0.7rem;
+      color: #2e3a5a;
+      font-variant-numeric: tabular-nums;
+    }
+    .hs-name {
+      flex-shrink: 0;
+      width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hs-bar-wrap { flex: 1; min-width: 80px; }
+    .hs-bar-bg {
+      width: 100%;
+      height: 8px;
+      background: #1a2236;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .hs-bar {
+      height: 100%;
+      border-radius: 4px;
+      min-width: 2px;
+      background: linear-gradient(90deg, #e06030, #f09040);
+      transition: width 0.2s;
+    }
+    .hs-bar.sort-calls  { background: linear-gradient(90deg, #3a80ff, #7060ff); }
+    .hs-bar.sort-selfMs { background: linear-gradient(90deg, #20b080, #40d0a0); }
+    .hs-time  { flex-shrink:0; width:80px;  text-align:right; font-size:0.78rem; color:#8aaeff; font-variant-numeric:tabular-nums; }
+    .hs-calls { flex-shrink:0; width:54px;  text-align:right; font-size:0.75rem; color:#e0a840; font-variant-numeric:tabular-nums; }
+    .hs-avg   { flex-shrink:0; width:80px;  text-align:right; font-size:0.72rem; color:#4e6094;  font-variant-numeric:tabular-nums; }
+
+    /* ── Bottom-up view ── */
+    #bu-search-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+    #bu-search  { flex:1; min-width:160px; max-width:400px; background:#141c2e; border:1px solid #2e3a5a;
+                  color:#c9d8ff; border-radius:6px; padding:5px 10px; font-size:0.85rem; }
+    #bu-search:focus { outline:none; border-color:#4e7aff; }
+    #bu-search::placeholder { color:#3a4a6a; }
+
+    .bu-row { margin:2px 0; border-radius:6px; }
+    .bu-header {
+      display:flex; align-items:center; gap:8px; padding:5px 8px;
+      cursor:pointer; border-radius:6px; transition:background 0.12s; user-select:none;
+    }
+    .bu-header:hover { background:#1a2236; }
+    .bu-toggle { flex-shrink:0; width:16px; color:#4e6094; font-size:0.75rem; transition:transform 0.18s; }
+    .bu-toggle.open { transform:rotate(90deg); color:#8aaeff; }
+    .bu-toggle.leaf { color:#2a3350; cursor:default; }
+    .bu-name  { flex-shrink:0; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .bu-bar-wrap { flex:1; min-width:60px; }
+    .bu-bar-bg { width:100%; height:6px; background:#1a2236; border-radius:3px; overflow:hidden; }
+    .bu-bar { height:100%; border-radius:3px; min-width:2px;
+              background:linear-gradient(90deg,#c040d0,#e060a0); }
+    .bu-time  { flex-shrink:0; width:70px; text-align:right; font-size:0.78rem; color:#8aaeff; font-variant-numeric:tabular-nums; }
+    .bu-calls { flex-shrink:0; width:50px; text-align:right; font-size:0.75rem; color:#e0a840; font-variant-numeric:tabular-nums; }
+    .bu-children { display:none; padding-left:20px; border-left:1px solid #1e2740; margin-left:11px; }
+    .bu-children.open { display:block; }
+    .bu-caller-label { font-size:0.72rem; color:#3a5090; padding:2px 8px; }
+
+    /* ── Flame Graph ── */
+    #flame-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+    #flame-canvas  { display:block; width:100%; cursor:crosshair; border-radius:4px; }
+    #flame-zoom-label { font-size:0.8rem; color:#4e5f8a; }
+    #flame-tooltip {
+      position: fixed;
+      background: #141c2e;
+      border: 1px solid #2e3a5a;
+      border-radius: 6px;
+      padding: 9px 13px;
+      font-size: 0.8rem;
+      pointer-events: none;
+      z-index: 200;
+      display: none;
+      max-width: 340px;
+      line-height: 1.7;
+      color: #c9d8ff;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4e7aff" stroke-width="1.8">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+  </svg>
+  <h1>Profiler Viewer</h1>
+</header>
+
+<!-- Loading overlay -->
+<div id="loading" style="display:none; position:fixed; inset:0; background:#0f1117cc;
+     z-index:100; display:none; flex-direction:column; align-items:center; justify-content:center; gap:14px;">
+  <svg width="40" height="40" viewBox="0 0 50 50" style="animation:spin 0.9s linear infinite">
+    <circle cx="25" cy="25" r="20" fill="none" stroke="#4e7aff" stroke-width="4"
+            stroke-dasharray="90 60" stroke-linecap="round"/>
+  </svg>
+  <span id="loading-label" style="color:#6a7fa8; font-size:0.9rem;">Parsing…</span>
+</div>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+<!-- Drop Zone -->
+<div id="drop-zone">
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="17 8 12 3 7 8"/>
+    <line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+  <p>JSON-Datei hier ablegen<small>oder klicken zum Auswählen</small></p>
+  <input type="file" id="file-input" accept=".json,application/json" />
+</div>
+
+<!-- Tree / Hotspot container -->
+<div id="tree-container">
+
+  <!-- Tab bar -->
+  <div id="tab-bar">
+    <button class="tab active" id="tab-tree">⬡ Baum</button>
+    <button class="tab" id="tab-hotspot">⬥ Hotspots</button>
+    <button class="tab" id="tab-flame">🔥 Flame Graph</button>
+    <button class="tab" id="tab-bottomup">↩ Bottom-up</button>
+    <span id="tab-info"></span>
+    <button class="btn" id="btn-reload" style="margin-left:8px">↺ Neue Datei</button>
+  </div>
+
+  <!-- Tree panel -->
+  <div id="panel-tree">
+    <div id="toolbar">
+      <button class="btn" id="btn-expand-all">Alle aufklappen</button>
+      <button class="btn" id="btn-collapse-all">Alle zuklappen</button>
+    </div>
+    <div id="tree-root"></div>
+  </div>
+
+  <!-- Hotspot panel -->
+  <div id="panel-hotspot" style="display:none">
+    <div class="hs-sort-bar">
+      <span>Sortieren nach:</span>
+      <button class="btn sort-btn active" data-sort="totalMs">Total Zeit ↓</button>
+      <button class="btn sort-btn" data-sort="selfMs">Self Zeit ↓</button>
+      <button class="btn sort-btn" data-sort="callCount">Aufrufe ↓</button>
+    </div>
+    <div id="hs-root"></div>
+  </div>
+
+  <!-- Bottom-up panel -->
+  <div id="panel-bottomup" style="display:none">
+    <div id="bu-search-bar">
+      <input id="bu-search" type="search" placeholder="Methode suchen…" autocomplete="off" />
+      <button class="btn sort-btn bu-sort active" data-busort="totalMs">Total Zeit ↓</button>
+      <button class="btn sort-btn bu-sort" data-busort="selfMs">Self Zeit ↓</button>
+      <button class="btn sort-btn bu-sort" data-busort="callCount">Aufrufe ↓</button>
+    </div>
+    <div id="bu-root"></div>
+  </div>
+
+  <!-- Flame Graph panel -->
+  <div id="panel-flame" style="display:none">
+    <div id="flame-toolbar">
+      <button class="btn" id="flame-back" disabled>← Zurück</button>
+      <button class="btn" id="flame-reset">Zurücksetzen</button>
+      <span id="flame-zoom-label"></span>
+    </div>
+    <canvas id="flame-canvas"></canvas>
+  </div>
+
+</div>
+<div id="flame-tooltip"></div>
+
+<script>
+// ── Web Worker (inline blob) ──────────────────────────────────────────────────
+// Parses JSON off the main thread so the UI never freezes on large files.
+const WORKER_SRC = `
+  self.onmessage = function(e) {
+    try {
+      const data = JSON.parse(e.data);
+      self.postMessage({ ok: true, data });
+    } catch(err) {
+      self.postMessage({ ok: false, error: err.message });
+    }
+  };
+`;
+const workerBlob = new Blob([WORKER_SRC], { type: 'application/javascript' });
+let workerUrl = URL.createObjectURL(workerBlob);
+
+// ── UI refs ───────────────────────────────────────────────────────────────────
+const dropZone      = document.getElementById('drop-zone');
+const fileInput     = document.getElementById('file-input');
+const treeContainer = document.getElementById('tree-container');
+const treeRoot      = document.getElementById('tree-root');
+const hsRoot        = document.getElementById('hs-root');
+const tabInfo       = document.getElementById('tab-info');
+const loading       = document.getElementById('loading');
+const loadingLabel  = document.getElementById('loading-label');
+
+// ── Global state ──────────────────────────────────────────────────────────────
+let parsedRoots    = null;
+let globalTotalMs  = 0;
+let currentHsSort  = 'totalMs';
+
+// ── Bottom-up state ───────────────────────────────────────────────────────────
+let buData     = [];   // flat list of { name, totalMs, selfMs, callCount, callers:[{path,totalMs,callCount}] }
+let buSort     = 'totalMs';
+let buFilter   = '';
+
+// ── Flame state ───────────────────────────────────────────────────────────────
+let flameBlocks    = [];
+let flameRows      = [];
+let flameMaxDepth  = 0;
+let flameViewX0    = 0;
+let flameViewX1    = 1;
+let flameZoomStack = [];
+
+// ── Drop / click handlers ─────────────────────────────────────────────────────
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) readFile(fileInput.files[0]); });
+
+// ── File reading + Worker ─────────────────────────────────────────────────────
+function readFile(file) {
+  showLoading(`Lese Datei… (${(file.size / 1e6).toFixed(1)} MB)`);
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    showLoading('Parsing JSON…');
+    const text = e.target.result;
+
+    const worker = new Worker(workerUrl);
+    worker.onmessage = msg => {
+      worker.terminate();
+      if (!msg.data.ok) { hideLoading(); alert('Ungültige JSON-Datei:\n' + msg.data.error); return; }
+      const data = msg.data.data;
+      hideLoading();
+      renderTree(Array.isArray(data) ? data : [data], file.name);
+    };
+    worker.postMessage(text);   // transferring string (no copy for postMessage in all browsers)
+  };
+  reader.readAsText(file);
+}
+
+function showLoading(msg) {
+  loadingLabel.textContent = msg;
+  loading.style.display = 'flex';
+}
+function hideLoading() {
+  loading.style.display = 'none';
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderTree(roots, filename) {
+  parsedRoots   = roots;
+  globalTotalMs = roots.reduce((s, r) => s + (r.totalMs || 0), 0);
+  const nodeCount = countNodes(roots);
+  tabInfo.textContent = `${filename}  ·  ${fmt(globalTotalMs)}  ·  ${nodeCount.toLocaleString()} Knoten`;
+
+  treeRoot.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  roots.forEach(node => frag.appendChild(buildNode(node, globalTotalMs, 0)));
+  treeRoot.appendChild(frag);
+
+  dropZone.style.display = 'none';
+  treeContainer.style.display = 'block';
+  buildFlameData(roots);
+  buildBottomUpData(roots);
+  switchTab('tree');
+}
+
+// ── Bottom-up build ─────────────────────────────────────────────────────────────
+function buildBottomUpData(roots) {
+  // Walk entire tree; for every node record its parent chain as one "caller path"
+  const map = new Map(); // name -> { name, totalMs, selfMs, callCount, callers: Map<path, {path,totalMs,callCount}> }
+
+  function walk(node, ancestorPath) {
+    const name = node.name || '?';
+    if (!map.has(name)) map.set(name, { name, totalMs:0, selfMs:0, callCount:0, callers: new Map() });
+    const entry = map.get(name);
+    entry.totalMs   += node.totalMs   || 0;
+    entry.selfMs    += node.selfMs    || 0;
+    entry.callCount += node.callCount || 0;
+
+    if (ancestorPath) {
+      const callerKey = ancestorPath[ancestorPath.length - 1] || '(root)';
+      if (!entry.callers.has(callerKey)) {
+        entry.callers.set(callerKey, { path: callerKey, totalMs: 0, callCount: 0 });
+      }
+      const c = entry.callers.get(callerKey);
+      c.totalMs   += node.totalMs   || 0;
+      c.callCount += node.callCount || 0;
+    }
+
+    if (node.children) {
+      const nextPath = ancestorPath ? [...ancestorPath, name] : [name];
+      for (const child of node.children) walk(child, nextPath);
+    }
+  }
+
+  for (const root of roots) walk(root, null);
+
+  buData = [];
+  for (const entry of map.values()) {
+    entry.callersArr = [...entry.callers.values()].sort((a,b) => b.totalMs - a.totalMs);
+    buData.push(entry);
+  }
+}
+
+function renderBottomUp() {
+  const buRoot = document.getElementById('bu-root');
+  if (!buRoot) return;
+
+  let rows = buFilter
+    ? buData.filter(r => r.name.toLowerCase().includes(buFilter))
+    : buData;
+  rows = [...rows].sort((a,b) => b[buSort] - a[buSort]);
+
+  const maxVal = rows.length ? rows[0][buSort] : 1;
+
+  buRoot.innerHTML = '';
+  const frag = document.createDocumentFragment();
+
+  rows.forEach(row => {
+    const { ns, fn } = splitName(row.name);
+    const pct = maxVal > 0 ? (row[buSort] / maxVal * 100) : 0;
+    const hasCallers = row.callersArr.length > 0;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'bu-row';
+
+    const header = document.createElement('div');
+    header.className = 'bu-header';
+
+    const toggle = document.createElement('span');
+    toggle.className = hasCallers ? 'bu-toggle' : 'bu-toggle leaf';
+    toggle.textContent = hasCallers ? '▶' : '·';
+
+    const namePart = document.createElement('span');
+    namePart.className = 'bu-name';
+    namePart.innerHTML = ns
+      ? `<span class="ns">${escHtml(ns)}</span><span class="sep">::</span><span class="fn">${escHtml(fn)}</span>`
+      : `<span class="fn">${escHtml(fn)}</span>`;
+
+    const barWrap = document.createElement('div');
+    barWrap.className = 'bu-bar-wrap';
+    barWrap.innerHTML = `<div class="bu-bar-bg"><div class="bu-bar" style="width:${pct.toFixed(2)}%"></div></div>`;
+
+    const timeSpan  = document.createElement('span');
+    timeSpan.className = 'bu-time';
+    timeSpan.title     = 'Kumulierte Total-Zeit';
+    timeSpan.textContent = fmt(row.totalMs);
+
+    const callSpan  = document.createElement('span');
+    callSpan.className = 'bu-calls';
+    callSpan.title     = 'Gesamtaufrufe';
+    callSpan.textContent = '×' + row.callCount;
+
+    header.appendChild(toggle);
+    header.appendChild(namePart);
+    header.appendChild(barWrap);
+    header.appendChild(timeSpan);
+    header.appendChild(callSpan);
+    wrapper.appendChild(header);
+
+    if (hasCallers) {
+      const childDiv = document.createElement('div');
+      childDiv.className = 'bu-children';
+      let built = false;
+
+      header.addEventListener('click', () => {
+        if (!built) {
+          built = true;
+          const label = document.createElement('div');
+          label.className = 'bu-caller-label';
+          label.textContent = 'Aufgerufen von:';
+          childDiv.appendChild(label);
+          row.callersArr.forEach(caller => {
+            const { ns: cns, fn: cfn } = splitName(caller.path);
+            const cRow = document.createElement('div');
+            cRow.className = 'bu-header';
+            cRow.style.paddingLeft = '24px';
+            cRow.innerHTML =
+              `<span class="bu-toggle leaf">·</span>` +
+              `<span class="bu-name">` +
+                (cns ? `<span class="ns">${escHtml(cns)}</span><span class="sep">::</span>` : '') +
+                `<span class="fn">${escHtml(cfn)}</span>` +
+              `</span>` +
+              `<span class="bu-time" style="margin-left:auto">${fmt(caller.totalMs)}</span>` +
+              `<span class="bu-calls">×${caller.callCount}</span>`;
+            childDiv.appendChild(cRow);
+          });
+        }
+        const open = childDiv.classList.toggle('open');
+        toggle.classList.toggle('open', open);
+      });
+
+      wrapper.appendChild(childDiv);
+    }
+
+    frag.appendChild(wrapper);
+  });
+
+  buRoot.appendChild(frag);
+}
+
+// ── Hotspot aggregation ───────────────────────────────────────────────────────
+function aggregateByName(roots) {
+  const map = new Map();
+  const stack = [...roots];
+  while (stack.length) {
+    const node = stack.pop();
+    const key = node.name || '?';
+    if (!map.has(key)) {
+      map.set(key, { name: key, totalMs: 0, selfMs: 0, callCount: 0 });
+    }
+    const e = map.get(key);
+    e.totalMs    += node.totalMs    || 0;
+    e.selfMs     += node.selfMs     || 0;
+    e.callCount  += node.callCount  || 0;
+    if (node.children) for (const c of node.children) stack.push(c);
+  }
+  return [...map.values()];
+}
+
+function renderHotspot(sortKey) {
+  currentHsSort = sortKey;
+  // update sort button states
+  document.querySelectorAll('.sort-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.sort === sortKey);
+  });
+
+  const rows = aggregateByName(parsedRoots);
+  rows.sort((a, b) => b[sortKey] - a[sortKey]);
+
+  const maxVal = rows.length ? rows[0][sortKey] : 1;
+  const barClass = sortKey === 'callCount' ? 'sort-calls' : sortKey === 'selfMs' ? 'sort-selfMs' : '';
+
+  hsRoot.innerHTML = '';
+  const frag = document.createDocumentFragment();
+
+  rows.forEach((row, i) => {
+    const { ns, fn } = splitName(row.name);
+    const pct   = maxVal > 0 ? (row[sortKey] / maxVal * 100) : 0;
+    const avg   = row.callCount > 0 ? row.totalMs / row.callCount : 0;
+
+    const div = document.createElement('div');
+    div.className = 'hs-row';
+
+    div.innerHTML = `
+      <span class="hs-rank">${i + 1}</span>
+      <span class="hs-name">
+        ${ns ? `<span class="ns">${escHtml(ns)}</span><span class="sep">::</span>` : ''}<span class="fn">${escHtml(fn)}</span>
+      </span>
+      <div class="hs-bar-wrap">
+        <div class="hs-bar-bg">
+          <div class="hs-bar ${barClass}" style="width:${pct.toFixed(2)}%"></div>
+        </div>
+      </div>
+      <span class="hs-time" title="Kumulierte Total-Zeit">${fmt(row.totalMs)}</span>
+      <span class="hs-calls" title="Gesamtanzahl Aufrufe">×${row.callCount}</span>
+      <span class="hs-avg" title="Ø Zeit pro Aufruf">${fmt(avg)}/call</span>
+    `;
+    frag.appendChild(div);
+  });
+
+  hsRoot.appendChild(frag);
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  ['tree', 'hotspot', 'flame', 'bottomup'].forEach(t => {
+    document.getElementById('tab-'   + t).classList.toggle('active', t === tab);
+    document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
+  });
+  if (tab === 'hotspot'  && parsedRoots)        renderHotspot(currentHsSort);
+  if (tab === 'flame'    && flameBlocks.length) renderFlame();
+  if (tab === 'bottomup' && parsedRoots)        renderBottomUp();
+}
+
+document.getElementById('tab-tree').addEventListener(    'click', () => switchTab('tree'));
+document.getElementById('tab-hotspot').addEventListener( 'click', () => switchTab('hotspot'));
+document.getElementById('tab-flame').addEventListener(   'click', () => switchTab('flame'));
+document.getElementById('tab-bottomup').addEventListener('click', () => switchTab('bottomup'));
+
+// Bottom-up sort + search
+document.querySelectorAll('.bu-sort').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.bu-sort').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    buSort = btn.dataset.busort;
+    renderBottomUp();
+  });
+});
+document.getElementById('bu-search').addEventListener('input', e => {
+  buFilter = e.target.value.trim().toLowerCase();
+  renderBottomUp();
+});
+
+document.querySelectorAll('.sort-btn').forEach(btn => {
+  btn.addEventListener('click', () => renderHotspot(btn.dataset.sort));
+});
+
+function countNodes(nodes) {
+  let n = 0;
+  const stack = [...nodes];
+  while (stack.length) {
+    const cur = stack.pop();
+    n++;
+    if (cur.children) stack.push(...cur.children);
+  }
+  return n;
+}
+
+function splitName(fullName) {
+  const idx = fullName ? fullName.lastIndexOf('::') : -1;
+  return idx !== -1
+    ? { ns: fullName.slice(0, idx), fn: fullName.slice(idx + 2) }
+    : { ns: '', fn: fullName || '?' };
+}
+
+function fmt(ms) {
+  if (ms >= 1000) return (ms / 1000).toFixed(3) + ' s';
+  if (ms >= 1)    return ms.toFixed(2) + ' ms';
+  return ms.toFixed(4) + ' ms';
+}
+
+// buildNode builds the header immediately but defers child DOM until first expand.
+function buildNode(node, rootTotalMs, depth) {
+  const { ns, fn } = splitName(node.name);
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+  const pct     = rootTotalMs > 0 ? Math.max(0, Math.min(100, (node.totalMs / rootTotalMs) * 100)) : 0;
+  const selfPct = node.totalMs  > 0 ? Math.max(0, Math.min(100, (node.selfMs  / node.totalMs)  * 100)) : 0;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = `node d${Math.min(depth, 4)}`;
+
+  // header row
+  const header = document.createElement('div');
+  header.className = 'node-header';
+
+  // toggle icon
+  const toggle = document.createElement('span');
+  toggle.className = hasChildren ? 'toggle' : 'toggle leaf';
+  toggle.textContent = hasChildren ? '▶' : '·';
+  header.appendChild(toggle);
+
+  // name
+  const namePart = document.createElement('span');
+  namePart.className = 'name-part';
+  if (ns) {
+    namePart.innerHTML =
+      `<span class="ns">${escHtml(ns)}</span><span class="sep">::</span><span class="fn">${escHtml(fn)}</span>`;
+  } else {
+    namePart.innerHTML = `<span class="fn">${escHtml(fn)}</span>`;
+  }
+  header.appendChild(namePart);
+
+  // call count badge
+  if (node.callCount !== undefined) {
+    const cc = document.createElement('span');
+    cc.className = node.callCount > 1 ? 'call-count multi' : 'call-count';
+    cc.title = 'Anzahl Aufrufe';
+    cc.textContent = '×' + node.callCount;
+    header.appendChild(cc);
+  }
+
+  // bar
+  const barWrap = document.createElement('div');
+  barWrap.className = 'bar-wrap';
+
+  const barBg = document.createElement('div');
+  barBg.className = 'bar-bg';
+
+  const barTotal = document.createElement('div');
+  barTotal.className = 'bar-total';
+  barTotal.style.width = pct.toFixed(2) + '%';
+  barTotal.title = `Total: ${pct.toFixed(1)} % von Gesamt`;
+
+  // self overlay inside bar
+  const barSelf = document.createElement('div');
+  barSelf.style.cssText = `
+    position: absolute; top: 0; left: 0;
+    height: 100%; width: ${selfPct.toFixed(2)}%;
+    background: rgba(255,255,255,0.35); border-radius: 3px;
+  `;
+  barTotal.style.position = 'relative';
+  barTotal.appendChild(barSelf);
+
+  barBg.appendChild(barTotal);
+  barWrap.appendChild(barBg);
+  header.appendChild(barWrap);
+
+  // time labels
+  const timeTotal = document.createElement('span');
+  timeTotal.className = 'time-total';
+  timeTotal.title = 'Total Zeit (inkl. Kinder)';
+  timeTotal.textContent = fmt(node.totalMs || 0);
+  header.appendChild(timeTotal);
+
+  const timeSelf = document.createElement('span');
+  timeSelf.className = 'time-self';
+  timeSelf.title = 'Self Zeit (ohne Kinder)';
+  timeSelf.textContent = 'self ' + fmt(node.selfMs || 0);
+  header.appendChild(timeSelf);
+
+  wrapper.appendChild(header);
+
+  // ── Lazy children ────────────────────────────────────────────────────────────
+  // Children DOM is built only on the FIRST expand, not upfront.
+  // This keeps initial render fast even for 50 MB / 100k-node trees.
+  if (hasChildren) {
+    const childrenDiv = document.createElement('div');
+    childrenDiv.className = 'node-children';
+    let childrenBuilt = false;
+
+    wrapper.appendChild(childrenDiv);
+
+    header.addEventListener('click', () => {
+      // Build children DOM only once, on first open
+      if (!childrenBuilt) {
+        childrenBuilt = true;
+        const frag = document.createDocumentFragment();
+        node.children.forEach(child => frag.appendChild(buildNode(child, rootTotalMs, depth + 1)));
+        childrenDiv.appendChild(frag);
+      }
+      const open = childrenDiv.classList.toggle('open');
+      toggle.classList.toggle('open', open);
+    });
+  }
+
+  return wrapper;
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ── Toolbar ───────────────────────────────────────────────────────────────────
+document.getElementById('btn-expand-all').addEventListener('click', () => {
+  const headers = [...treeRoot.querySelectorAll('.node-header')];
+  headers.forEach(h => h.click());
+  treeRoot.querySelectorAll('.node-children').forEach(el => el.classList.add('open'));
+  treeRoot.querySelectorAll('.toggle:not(.leaf)').forEach(el => el.classList.add('open'));
+});
+
+document.getElementById('btn-collapse-all').addEventListener('click', () => {
+  treeRoot.querySelectorAll('.node-children').forEach(el => el.classList.remove('open'));
+  treeRoot.querySelectorAll('.toggle').forEach(el => el.classList.remove('open'));
+});
+
+document.getElementById('btn-reload').addEventListener('click', () => {
+  treeRoot.innerHTML = '';
+  hsRoot.innerHTML   = '';
+  parsedRoots    = null;
+  buData  = [];
+  buSort  = 'totalMs';
+  buFilter = '';
+  const buSearch = document.getElementById('bu-search');
+  if (buSearch) buSearch.value = '';
+  document.getElementById('bu-root').innerHTML = '';
+  flameBlocks    = [];
+  flameRows      = [];
+  flameMaxDepth  = 0;
+  flameViewX0    = 0;
+  flameViewX1    = 1;
+  flameZoomStack = [];
+  const fc = document.getElementById('flame-canvas');
+  if (fc) { const ctx = fc.getContext('2d'); ctx.clearRect(0, 0, fc.width, fc.height); }
+  treeContainer.style.display = 'none';
+  dropZone.style.display = '';
+  fileInput.value = '';
+  tabInfo.textContent = '';
+});
+// ── Flame Graph ──────────────────────────────────────────────────────────────
+const FLAME_ROW_H = 22;
+
+function buildFlameData(roots) {
+  flameBlocks    = [];
+  flameRows      = [];
+  flameMaxDepth  = 0;
+  flameViewX0    = 0;
+  flameViewX1    = 1;
+  flameZoomStack = [];
+  const total = globalTotalMs;
+
+  // Iterative DFS to avoid stack overflow on deep trees
+  const stack = [];
+  for (let i = roots.length - 1; i >= 0; i--) {
+    let x = 0;
+    for (let j = 0; j < i; j++) x += total > 0 ? (roots[j].totalMs || 0) / total : 0;
+    stack.push({ node: roots[i], x, depth: 0 });
+  }
+
+  while (stack.length) {
+    const { node, x, depth } = stack.pop();
+    if (depth > flameMaxDepth) flameMaxDepth = depth;
+    const w = total > 0 ? (node.totalMs || 0) / total : 0;
+    flameBlocks.push({ node, x, w, depth });
+    if (node.children && node.children.length) {
+      let cx = x;
+      // Push children right-to-left so left child is processed first
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        const child = node.children[i];
+        let ox = x;
+        for (let j = 0; j < i; j++) ox += total > 0 ? (node.children[j].totalMs || 0) / total : 0;
+        stack.push({ node: child, x: ox, depth: depth + 1 });
+      }
+    }
+  }
+
+  // Sort each depth row by x for binary-search hit testing
+  for (const b of flameBlocks) {
+    if (!flameRows[b.depth]) flameRows[b.depth] = [];
+    flameRows[b.depth].push(b);
+  }
+  for (const row of flameRows) {
+    if (row) row.sort((a, b) => a.x - b.x);
+  }
+}
+
+function flameColor(name) {
+  const ns = (name || '').split('::')[0];
+  let h = 5381;
+  for (let i = 0; i < ns.length; i++) h = (((h << 5) + h) ^ ns.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 280 + 20}, 52%, 36%)`;
+}
+
+function renderFlame() {
+  const canvas = document.getElementById('flame-canvas');
+  if (!canvas || !flameBlocks.length) return;
+
+  const W = Math.max(canvas.parentElement.clientWidth - 2, 400);
+  const H = (flameMaxDepth + 1) * FLAME_ROW_H + 8;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = '11px "Segoe UI", system-ui, sans-serif';
+
+  const viewRange = flameViewX1 - flameViewX0;
+  const scale = W / viewRange;
+
+  for (const b of flameBlocks) {
+    if (b.w < 1e-9) continue;
+    const bx0 = (b.x - flameViewX0) * scale;
+    const bx1 = bx0 + b.w * scale;
+    if (bx1 < 0 || bx0 > W) continue;
+    const px = Math.max(0, bx0);
+    const pw = Math.min(W, bx1) - px;
+    if (pw < 1) continue;
+    const py = b.depth * FLAME_ROW_H + 2;
+
+    ctx.fillStyle = flameColor(b.node.name);
+    ctx.fillRect(px + 0.5, py + 0.5, pw - 1, FLAME_ROW_H - 2);
+
+    if (pw > 28) {
+      const { fn } = splitName(b.node.name || '');
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(px + 2, py, pw - 4, FLAME_ROW_H);
+      ctx.clip();
+      ctx.fillText(fn, px + 4, py + 14);
+      ctx.restore();
+    }
+  }
+
+  const backBtn = document.getElementById('flame-back');
+  if (backBtn) backBtn.disabled = flameZoomStack.length === 0;
+  const zl = document.getElementById('flame-zoom-label');
+  if (zl) zl.textContent = flameZoomStack.length
+    ? `Zoom ×${(1 / viewRange).toFixed(1)}  —  ${(viewRange * 100).toFixed(1)} % sichtbar`
+    : '';
+}
+
+function flameHitTest(canvasW, mx, my) {
+  const viewRange = flameViewX1 - flameViewX0;
+  const scale = canvasW / viewRange;
+  const fx = mx / scale + flameViewX0;
+  const depth = Math.floor((my - 2) / FLAME_ROW_H);
+  if (depth < 0 || depth > flameMaxDepth) return null;
+  const row = flameRows[depth];
+  if (!row) return null;
+  // Binary search
+  let lo = 0, hi = row.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const b = row[mid];
+    if      (fx < b.x)        hi = mid - 1;
+    else if (fx > b.x + b.w)  lo = mid + 1;
+    else return b;
+  }
+  return null;
+}
+
+(function setupFlameEvents() {
+  const canvas  = document.getElementById('flame-canvas');
+  const tooltip = document.getElementById('flame-tooltip');
+
+  function toCanvasCoords(e) {
+    const r  = canvas.getBoundingClientRect();
+    return [
+      (e.clientX - r.left) * (canvas.width  / r.width),
+      (e.clientY - r.top)  * (canvas.height / r.height)
+    ];
+  }
+
+  canvas.addEventListener('mousemove', e => {
+    const [mx, my] = toCanvasCoords(e);
+    const b = flameHitTest(canvas.width, mx, my);
+    if (b) {
+      const pctTotal = (b.w * 100).toFixed(2);
+      const pctView  = ((b.w / (flameViewX1 - flameViewX0)) * 100).toFixed(1);
+      tooltip.innerHTML =
+        `<strong style="color:#c9d8ff">${escHtml(b.node.name || '?')}</strong><br>` +
+        `Total: <b>${fmt(b.node.totalMs || 0)}</b> (${pctTotal} % gesamt)<br>` +
+        `Self: ${fmt(b.node.selfMs || 0)}<br>` +
+        `Aufrufe: ×${b.node.callCount || 1}`;
+      tooltip.style.display = 'block';
+      tooltip.style.left    = (e.clientX + 16) + 'px';
+      tooltip.style.top     = (e.clientY - 10) + 'px';
+      canvas.style.cursor   = 'pointer';
+    } else {
+      tooltip.style.display = 'none';
+      canvas.style.cursor   = 'crosshair';
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+
+  canvas.addEventListener('click', e => {
+    const [mx, my] = toCanvasCoords(e);
+    const b = flameHitTest(canvas.width, mx, my);
+    if (b && b.w > 1e-6) {
+      flameZoomStack.push({ x0: flameViewX0, x1: flameViewX1 });
+      flameViewX0 = b.x;
+      flameViewX1 = b.x + b.w;
+      renderFlame();
+    }
+  });
+
+  document.getElementById('flame-back').addEventListener('click', () => {
+    if (!flameZoomStack.length) return;
+    const prev  = flameZoomStack.pop();
+    flameViewX0 = prev.x0;
+    flameViewX1 = prev.x1;
+    renderFlame();
+  });
+
+  document.getElementById('flame-reset').addEventListener('click', () => {
+    flameZoomStack = [];
+    flameViewX0 = 0;
+    flameViewX1 = 1;
+    renderFlame();
+  });
+
+  // Re-render on window resize while flame tab is visible
+  window.addEventListener('resize', () => {
+    if (document.getElementById('panel-flame').style.display !== 'none') renderFlame();
+  });
+})();
+</script>
+</body>
+</html>
