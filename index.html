@@ -317,6 +317,34 @@
     .bu-children.open { display:block; }
     .bu-caller-label { font-size:0.72rem; color:#3a5090; padding:2px 8px; }
 
+    /* ── Shared search inputs ── */
+    .search-input {
+      flex: 1; min-width: 150px; max-width: 320px;
+      background: #141c2e; border: 1px solid #2e3a5a;
+      color: #c9d8ff; border-radius: 6px;
+      padding: 5px 10px; font-size: 0.85rem;
+    }
+    .search-input:focus { outline: none; border-color: #4e7aff; }
+    .search-input::placeholder { color: #3a4a6a; }
+    #bu-module-search { flex:1; min-width:140px; max-width:280px;
+      background:#141c2e; border:1px solid #2e3a5a;
+      color:#c9d8ff; border-radius:6px; padding:5px 10px; font-size:0.85rem; }
+    #bu-module-search:focus { outline:none; border-color:#4e7aff; }
+    #bu-module-search::placeholder { color:#3a4a6a; }
+
+    /* ── Tree search results (flat list view while filter active) ── */
+    #tree-search-results { display: none; }
+    .search-result-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px; border-radius: 6px; margin: 2px 0;
+    }
+    .search-result-row:hover { background: #1a2236; }
+    .search-result-path {
+      flex-shrink: 0; font-size: 0.7rem; color: #3a4a6a;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 180px;
+    }
+
     /* ── Flame Graph ── */
     #flame-toolbar { display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
     #flame-canvas  { display:block; width:100%; cursor:crosshair; border-radius:4px; }
@@ -387,12 +415,21 @@
     <div id="toolbar">
       <button class="btn" id="btn-expand-all">Alle aufklappen</button>
       <button class="btn" id="btn-collapse-all">Alle zuklappen</button>
+      <input class="search-input" id="tree-method-search" type="search" placeholder="Methode suchen… (fuzzy)" autocomplete="off" />
+      <input class="search-input" id="tree-module-search" type="search" placeholder="Modul / Namespace…" autocomplete="off" />
+      <span id="tree-search-count" style="font-size:0.8rem;color:#4e5f8a;"></span>
     </div>
     <div id="tree-root"></div>
+    <div id="tree-search-results"></div>
   </div>
 
   <!-- Hotspot panel -->
   <div id="panel-hotspot" style="display:none">
+    <div class="hs-sort-bar" style="margin-bottom:8px">
+      <input class="search-input" id="hs-method-search" type="search" placeholder="Methode suchen… (fuzzy)" autocomplete="off" />
+      <input class="search-input" id="hs-module-search" type="search" placeholder="Modul / Namespace…" autocomplete="off" />
+      <span id="hs-search-count" style="font-size:0.8rem;color:#4e5f8a;"></span>
+    </div>
     <div class="hs-sort-bar">
       <span>Sortieren nach:</span>
       <button class="btn sort-btn active" data-sort="totalMs">Total Zeit ↓</button>
@@ -405,7 +442,8 @@
   <!-- Bottom-up panel -->
   <div id="panel-bottomup" style="display:none">
     <div id="bu-search-bar">
-      <input id="bu-search" type="search" placeholder="Methode suchen…" autocomplete="off" />
+      <input id="bu-search" type="search" placeholder="Methode suchen… (fuzzy)" autocomplete="off" />
+      <input id="bu-module-search" type="search" placeholder="Modul / Namespace…" autocomplete="off" />
       <button class="btn sort-btn bu-sort active" data-busort="totalMs">Total Zeit ↓</button>
       <button class="btn sort-btn bu-sort" data-busort="selfMs">Self Zeit ↓</button>
       <button class="btn sort-btn bu-sort" data-busort="callCount">Aufrufe ↓</button>
@@ -461,6 +499,13 @@ let currentHsSort  = 'totalMs';
 let buData     = [];   // flat list of { name, totalMs, selfMs, callCount, callers:[{path,totalMs,callCount}] }
 let buSort     = 'totalMs';
 let buFilter   = '';
+let buModuleFilter = '';
+
+// ── Filter state ──────────────────────────────────────────────────────────────
+let treeMethodFilter = '';
+let treeModuleFilter = '';
+let hsMethodFilter   = '';
+let hsModuleFilter   = '';
 
 // ── Flame state ───────────────────────────────────────────────────────────────
 let flameBlocks    = [];
@@ -572,8 +617,12 @@ function renderBottomUp() {
   const buRoot = document.getElementById('bu-root');
   if (!buRoot) return;
 
-  let rows = buFilter
-    ? buData.filter(r => r.name.toLowerCase().includes(buFilter))
+  let rows = (buFilter || buModuleFilter)
+    ? buData.filter(r => {
+        const { ns } = splitName(r.name);
+        return (!buFilter       || fuzzyMatch(buFilter,       r.name))
+            && (!buModuleFilter || fuzzyMatch(buModuleFilter, ns));
+      })
     : buData;
   rows = [...rows].sort((a,b) => b[buSort] - a[buSort]);
 
@@ -686,12 +735,21 @@ function aggregateByName(roots) {
 
 function renderHotspot(sortKey) {
   currentHsSort = sortKey;
-  // update sort button states
-  document.querySelectorAll('.sort-btn').forEach(b => {
+  // update sort button states (only hotspot sort buttons, not bu-sort)
+  document.querySelectorAll('.sort-btn[data-sort]').forEach(b => {
     b.classList.toggle('active', b.dataset.sort === sortKey);
   });
 
-  const rows = aggregateByName(parsedRoots);
+  let rows = aggregateByName(parsedRoots);
+  if (hsMethodFilter || hsModuleFilter) {
+    rows = rows.filter(r => {
+      const { ns, fn } = splitName(r.name);
+      return (!hsMethodFilter || fuzzyMatch(hsMethodFilter, fn) || fuzzyMatch(hsMethodFilter, r.name))
+          && (!hsModuleFilter  || fuzzyMatch(hsModuleFilter,  ns));
+    });
+  }
+  const _hsCount = document.getElementById('hs-search-count');
+  if (_hsCount) _hsCount.textContent = (hsMethodFilter || hsModuleFilter) ? `${rows.length.toLocaleString()} Treffer` : '';
   rows.sort((a, b) => b[sortKey] - a[sortKey]);
 
   const maxVal = rows.length ? rows[0][sortKey] : 1;
@@ -757,8 +815,28 @@ document.getElementById('bu-search').addEventListener('input', e => {
   buFilter = e.target.value.trim().toLowerCase();
   renderBottomUp();
 });
+document.getElementById('bu-module-search').addEventListener('input', e => {
+  buModuleFilter = e.target.value.trim().toLowerCase();
+  renderBottomUp();
+});
+document.getElementById('tree-method-search').addEventListener('input', e => {
+  treeMethodFilter = e.target.value.trim().toLowerCase();
+  if (parsedRoots) renderTreeSearch();
+});
+document.getElementById('tree-module-search').addEventListener('input', e => {
+  treeModuleFilter = e.target.value.trim().toLowerCase();
+  if (parsedRoots) renderTreeSearch();
+});
+document.getElementById('hs-method-search').addEventListener('input', e => {
+  hsMethodFilter = e.target.value.trim().toLowerCase();
+  if (parsedRoots) renderHotspot(currentHsSort);
+});
+document.getElementById('hs-module-search').addEventListener('input', e => {
+  hsModuleFilter = e.target.value.trim().toLowerCase();
+  if (parsedRoots) renderHotspot(currentHsSort);
+});
 
-document.querySelectorAll('.sort-btn').forEach(btn => {
+document.querySelectorAll('.sort-btn[data-sort]').forEach(btn => {
   btn.addEventListener('click', () => renderHotspot(btn.dataset.sort));
 });
 
@@ -900,6 +978,130 @@ function escHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
+// ── Fuzzy / tolerant search ───────────────────────────────────────────────────
+// Returns true if all chars of query appear in target in order (subsequence match),
+// which tolerates gaps, abbreviations and minor typos.
+function fuzzyMatch(query, target) {
+  if (!query) return true;
+  const q = query.toLowerCase().trim();
+  if (!q) return true;
+  const t = (target || '').toLowerCase();
+  if (t.includes(q)) return true;   // fast path: exact substring
+  // subsequence: every char of q must appear in order somewhere in t
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  return qi === q.length;
+}
+
+// Iterative DFS: collects every node together with its ancestor name-path
+function collectAllNodes(roots) {
+  const result = [];
+  const stack  = roots.map(r => ({ node: r, path: [] }));
+  while (stack.length) {
+    const { node, path } = stack.pop();
+    result.push({ node, path });
+    if (node.children) {
+      const next = [...path, node.name || '?'];
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        stack.push({ node: node.children[i], path: next });
+      }
+    }
+  }
+  return result;
+}
+
+// Renders a flat filtered results list in the tree panel
+function renderTreeSearch() {
+  const resultsDiv  = document.getElementById('tree-search-results');
+  const treeRootDiv = document.getElementById('tree-root');
+  const countLabel  = document.getElementById('tree-search-count');
+  const hasFilter   = treeMethodFilter || treeModuleFilter;
+
+  if (!hasFilter) {
+    resultsDiv.style.display  = 'none';
+    treeRootDiv.style.display = '';
+    if (countLabel) countLabel.textContent = '';
+    return;
+  }
+
+  treeRootDiv.style.display = 'none';
+  resultsDiv.style.display  = 'block';
+  if (!parsedRoots) { resultsDiv.innerHTML = ''; return; }
+
+  const all     = collectAllNodes(parsedRoots);
+  const matched = all.filter(({ node }) => {
+    const { ns, fn } = splitName(node.name || '');
+    return (!treeMethodFilter || fuzzyMatch(treeMethodFilter, fn) || fuzzyMatch(treeMethodFilter, node.name || ''))
+        && (!treeModuleFilter  || fuzzyMatch(treeModuleFilter,  ns));
+  });
+  matched.sort((a, b) => (b.node.totalMs || 0) - (a.node.totalMs || 0));
+
+  if (countLabel) countLabel.textContent = `${matched.length.toLocaleString()} Treffer`;
+
+  resultsDiv.innerHTML = '';
+  if (!matched.length) {
+    resultsDiv.innerHTML = '<div style="color:#3a4a6a;padding:20px;text-align:center;font-size:0.85rem;">Keine Ergebnisse</div>';
+    return;
+  }
+
+  const frag  = document.createDocumentFragment();
+  const maxMs = matched.reduce((m, { node }) => Math.max(m, node.totalMs || 0), 0) || 1;
+  const limit = Math.min(matched.length, 300);
+
+  for (let i = 0; i < limit; i++) {
+    const { node, path } = matched[i];
+    const { ns, fn } = splitName(node.name || '');
+    const pct = (node.totalMs || 0) / maxMs * 100;
+
+    const row = document.createElement('div');
+    row.className = 'search-result-row';
+
+    const namePart = document.createElement('span');
+    namePart.className = 'name-part';
+    namePart.innerHTML = ns
+      ? `<span class="ns">${escHtml(ns)}</span><span class="sep">::</span><span class="fn">${escHtml(fn)}</span>`
+      : `<span class="fn">${escHtml(fn)}</span>`;
+
+    const pathSpan = document.createElement('span');
+    pathSpan.className = 'search-result-path';
+    if (path.length) {
+      const last  = splitName(path[path.length - 1]).fn;
+      pathSpan.textContent = path.length > 1 ? `…› ${last}` : last;
+      pathSpan.title = path.join(' › ');
+    }
+
+    const barWrap = document.createElement('div');
+    barWrap.className = 'bar-wrap';
+    barWrap.innerHTML = `<div class="bar-bg"><div class="bar-total" style="width:${pct.toFixed(2)}%"></div></div>`;
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'time-total';
+    timeSpan.textContent = fmt(node.totalMs || 0);
+
+    const selfSpan = document.createElement('span');
+    selfSpan.className = 'time-self';
+    selfSpan.textContent = 'self ' + fmt(node.selfMs || 0);
+
+    const cc = document.createElement('span');
+    cc.className = (node.callCount || 1) > 1 ? 'call-count multi' : 'call-count';
+    cc.textContent = '×' + (node.callCount || 1);
+
+    row.append(namePart, pathSpan, barWrap, timeSpan, selfSpan, cc);
+    frag.appendChild(row);
+  }
+
+  if (matched.length > limit) {
+    const more = document.createElement('div');
+    more.style.cssText = 'color:#3a4a6a;padding:10px;text-align:center;font-size:0.8rem;';
+    more.textContent = `… ${(matched.length - limit).toLocaleString()} weitere Treffer – Filter verfeinern`;
+    frag.appendChild(more);
+  }
+
+  resultsDiv.appendChild(frag);
+}
+
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 document.getElementById('btn-expand-all').addEventListener('click', () => {
   const headers = [...treeRoot.querySelectorAll('.node-header')];
@@ -920,8 +1122,22 @@ document.getElementById('btn-reload').addEventListener('click', () => {
   buData  = [];
   buSort  = 'totalMs';
   buFilter = '';
+  buModuleFilter = '';
+  treeMethodFilter = '';
+  treeModuleFilter = '';
+  hsMethodFilter   = '';
+  hsModuleFilter   = '';
   const buSearch = document.getElementById('bu-search');
   if (buSearch) buSearch.value = '';
+  ['bu-module-search','tree-method-search','tree-module-search','hs-method-search','hs-module-search'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  ['tree-search-count','hs-search-count'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '';
+  });
+  const tsr = document.getElementById('tree-search-results');
+  if (tsr) { tsr.style.display = 'none'; tsr.innerHTML = ''; }
+  document.getElementById('tree-root').style.display = '';
   document.getElementById('bu-root').innerHTML = '';
   flameBlocks    = [];
   flameRows      = [];
