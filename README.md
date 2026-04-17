@@ -3,6 +3,8 @@
 A zero-dependency, single-file HTML profiler viewer that runs entirely in the browser.
 Load any JSON profiling trace by drag & drop or file picker — no server, no install required.
 
+![Profiler Viewer screenshot](screenshot.png)
+
 ## Features
 
 | Tab | Description |
@@ -12,80 +14,43 @@ Load any JSON profiling trace by drag & drop or file picker — no server, no in
 | **🔥 Flame Graph** | Canvas-based flame graph. Click any block to zoom in; use *Back* / *Reset* to navigate. Hover for tooltip. |
 | **↩ Bottom-up** | Every method listed with its callers. Searchable and sortable. |
 
-## JSON format
+## SimPL example
 
-The viewer expects an array (or a single object) at the root. Each node:
+The following SimPL module shows how to enable the profiler, run your code, and write the result to a JSON file:
 
-```json
-{
-  "name": "MyNamespace::MyMethod",
-  "totalMs": 123.456,
-  "selfMs": 12.34,
-  "callCount": 5,
-  "children": [ /* recursive */ ]
-}
+```simpl
+module test
+
+import LinearAlgebraHelper
+using Profiler
+import Base
+import File
+
+export program Main
+    EnableProfiler
+    Do
+    File::FileWrite(
+        filename="Profile.json"
+        value<-Base::ValueToJson("Profile", GetProfilerResult)
+    )
+endprogram
+
+program Do
+    Something
+endprogram
+
+program Something
+    for i from 0 to 100
+        _result_ = LinearAlgebraHelper::AbsPosition(LinearAlgebraHelper::NewPos(1, 2, 3))
+    endfor
+endprogram
+
+end
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Display name; use `Namespace::Method` for colour grouping |
-| `totalMs` | number | Inclusive (wall-clock) time in milliseconds |
-| `selfMs` | number | Exclusive time (totalMs minus all children) |
-| `callCount` | number | Number of invocations |
-| `children` | array | Nested call nodes (optional) |
+The generated `Profile.json` can be loaded directly into this viewer via drag & drop.
 
-## 🚀 Deploy to GitHub Pages
-
-### 1 — Create a new GitHub repository
-
-Go to <https://github.com/new> and create an **empty public** repository
-(no README, no .gitignore).
-
-### 2 — Push the files
-
-```bash
-cd C:\Repos\profiler-viewer
-
-git init
-git add index.html README.md
-git commit -m "chore: initial release"
-
-# Replace USERNAME and REPO with your values
-git remote add origin https://github.com/USERNAME/REPO.git
-git branch -M main
-git push -u origin main
-```
-
-### 3 — Enable GitHub Pages
-
-1. Open the repository on GitHub.
-2. **Settings → Pages** (left sidebar).
-3. Under *Build and deployment* choose **Deploy from a branch**.
-4. Branch: `main` / Folder: `/ (root)` → **Save**.
-
-After ~30 seconds the site is live at:
-
-```
-https://USERNAME.github.io/REPO/
-```
-
----
-
-## Local usage
-
-Just open `index.html` in any modern browser — no build step, no server needed.
-
-```bash
-start index.html      # Windows
-open  index.html      # macOS
-xdg-open index.html   # Linux
-```
-
-## Performance notes
-
-* JSON parsing runs in a **Web Worker** so the UI never freezes.
-* Tree nodes are built **lazily** — only expanded nodes get DOM elements.
-* Tested with files up to 50 MB / 100 000 nodes.
+> For the JSON trace format specification see [TECH_DOC.md](TECH_DOC.md).
 
 ## License
 
