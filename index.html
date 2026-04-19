@@ -364,6 +364,30 @@
       color: #c9d8ff;
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     }
+
+    /* ── Global drag overlay ── */
+    #global-drop-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 17, 23, 0.85);
+      z-index: 300;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      pointer-events: none;
+      border: 3px dashed #4e7aff;
+    }
+    #global-drop-overlay.visible {
+      display: flex;
+    }
+    #global-drop-overlay svg { opacity: 0.7; }
+    #global-drop-overlay p {
+      color: #8aaeff;
+      font-size: 1rem;
+      font-weight: 500;
+    }
   </style>
 </head>
 <body>
@@ -464,6 +488,16 @@
 </div>
 <div id="flame-tooltip"></div>
 
+<!-- Global drag overlay -->
+<div id="global-drop-overlay">
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4e7aff" stroke-width="1.5">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="17 8 12 3 7 8"/>
+    <line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+  <p>JSON-Datei hier ablegen</p>
+</div>
+
 <script>
 // ── Web Worker (inline blob) ──────────────────────────────────────────────────
 // Parses JSON off the main thread so the UI never freezes on large files.
@@ -516,15 +550,37 @@ let flameViewX1    = 1;
 let flameZoomStack = [];
 
 // ── Drop / click handlers ─────────────────────────────────────────────────────
+const globalDropOverlay = document.getElementById('global-drop-overlay');
+let dragCounter = 0;
+
+// Click on the initial drop-zone still opens file picker
 dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => {
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) readFile(fileInput.files[0]); });
+
+// Global drag & drop – works everywhere in the app
+document.addEventListener('dragenter', e => {
   e.preventDefault();
-  dropZone.classList.remove('dragover');
+  dragCounter++;
+  globalDropOverlay.classList.add('visible');
+});
+document.addEventListener('dragover', e => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+document.addEventListener('dragleave', e => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    globalDropOverlay.classList.remove('visible');
+  }
+});
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  globalDropOverlay.classList.remove('visible');
   if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
 });
-fileInput.addEventListener('change', () => { if (fileInput.files[0]) readFile(fileInput.files[0]); });
 
 // ── File reading + Worker ─────────────────────────────────────────────────────
 function readFile(file) {
